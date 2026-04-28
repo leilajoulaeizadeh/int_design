@@ -1,0 +1,14 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+streamlit.log
+cloudflared.log
