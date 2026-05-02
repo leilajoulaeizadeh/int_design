@@ -12,6 +12,7 @@ import streamlit.components.v1 as components
 from PIL import Image, ImageOps
 
 from database import (
+    DATABASE_PATH,
     get_categories,
     get_products,
     get_sites,
@@ -530,6 +531,11 @@ def main() -> None:
     st.title("Room Designer")
     st.caption("Same mouse-drag interface as the notebook app, embedded in Streamlit.")
 
+    if DATABASE_PATH.exists():
+        st.info(f"Using database: {DATABASE_PATH.name}")
+    else:
+        st.warning("Database not found; creating and populating it now.")
+
     try:
         refresh_catalog()
     except Exception as exc:
@@ -539,6 +545,9 @@ def main() -> None:
         room, assets, asset_meta = load_assets()
     except FileNotFoundError as exc:
         st.error(str(exc))
+        return
+    except Exception as exc:
+        st.error(f"Failed to load assets or access database: {exc}")
         return
 
     payload_json = build_payload(room, assets, asset_meta)
