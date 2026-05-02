@@ -12,3 +12,4 @@ build/
 *.egg-info/
 streamlit.log
 cloudflared.log
+furniture.db
