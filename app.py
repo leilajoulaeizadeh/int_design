@@ -6,9 +6,23 @@ import json
 from io import BytesIO
 from pathlib import Path
 
+import requests
 import streamlit as st
 import streamlit.components.v1 as components
 from PIL import Image, ImageOps
+
+from database import (
+    DATABASE_PATH,
+    get_categories,
+    get_products,
+    get_sites,
+    has_products,
+    initialize_database,
+    upsert_products,
+)
+from scraper import fetch_ikea_products, fetch_meubella_products
+
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 RESAMPLING = getattr(Image, "Resampling", Image)
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -51,7 +65,17 @@ def remove_simple_background(image: Image.Image, tolerance: int = 45) -> Image.I
 
 
 @st.cache_data
-def load_assets() -> tuple[Image.Image, dict[str, Image.Image]]:
+def download_image_bytes(url: str) -> bytes | None:
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=15)
+        response.raise_for_status()
+        return response.content
+    except requests.RequestException:
+        return None
+
+
+@st.cache_data
+def load_assets() -> tuple[Image.Image, dict[str, Image.Image | str], dict[str, dict[str, str]]]:
     if not ROOM_IMAGE_PATH.exists():
         raise FileNotFoundError(f"Room image not found: {ROOM_IMAGE_PATH}")
 
@@ -63,12 +87,73 @@ def load_assets() -> tuple[Image.Image, dict[str, Image.Image]]:
     if not asset_paths:
         raise FileNotFoundError(f"No furniture images found in {DATA_DIR}")
 
+    def normalize_price(price: str | None) -> tuple[str, float | None]:
+        if not price:
+            return "Unknown", None
+        text = price.replace("€", "").replace("$", "").replace("EUR", "").replace(" ", "").replace(",", ".")
+        import re
+
+        match = re.search(r"(\d+(?:\.\d+)?)", text)
+        if not match:
+            return "Unknown", None
+        try:
+            value = float(match.group(1))
+        except ValueError:
+            return "Unknown", None
+        if value < 100:
+            return "< 100", value
+        if value < 200:
+            return "100-199", value
+        if value < 400:
+            return "200-399", value
+        if value < 600:
+            return "400-599", value
+        return "600+", value
+
     room = Image.open(ROOM_IMAGE_PATH).convert("RGBA")
-    assets = {
-        label: remove_simple_background(Image.open(path))
-        for label, path in asset_paths.items()
-    }
-    return room, assets
+    assets: dict[str, Image.Image | str] = {}
+    asset_meta: dict[str, dict[str, str]] = {}
+
+    for label, path in asset_paths.items():
+        assets[label] = remove_simple_background(Image.open(path))
+        asset_meta[label] = {
+            "site": "Local",
+            "category": "Local",
+            "price": "",
+            "price_interval": "Unknown",
+        }
+
+    scraped_products = get_products(limit=20)
+    for product in scraped_products:
+        cleaned_image_data_url = product.get("cleaned_image_data_url") or ""
+        image_url = product.get("image_url") or ""
+        label = f"{product['site']} / {product['category']} / {product['name']}"
+        if label in assets:
+            label = f"{label} (scraped)"
+
+        if cleaned_image_data_url:
+            assets[label] = cleaned_image_data_url
+        elif image_url:
+            image_bytes = download_image_bytes(image_url)
+            if image_bytes:
+                try:
+                    remote_image = Image.open(BytesIO(image_bytes)).convert("RGBA")
+                    assets[label] = remove_simple_background(remote_image)
+                except Exception:
+                    assets[label] = image_url
+            else:
+                assets[label] = image_url
+
+        price = product.get("price") or ""
+        interval, _ = normalize_price(price)
+        asset_meta[label] = {
+            "site": product.get("site", "Unknown"),
+            "category": product.get("category", "Unknown") or "Unknown",
+            "price": price,
+            "price_interval": interval,
+        }
+
+    return room, assets, asset_meta
 
 
 def image_to_data_url(image: Image.Image) -> str:
@@ -78,23 +163,39 @@ def image_to_data_url(image: Image.Image) -> str:
     return f"data:image/png;base64,{encoded}"
 
 
+def refresh_catalog(force: bool = False) -> None:
+    initialize_database()
+    if force or not has_products():
+        ikea_products = fetch_ikea_products(10)
+        meubella_products = fetch_meubella_products(10)
+
+        if ikea_products:
+            upsert_products("IKEA NL", ikea_products)
+        if meubella_products:
+            upsert_products("Meubella NL", meubella_products)
+
+
 @st.cache_data
-def build_payload(room: Image.Image, assets: dict[str, Image.Image]) -> str:
+def build_payload(room: Image.Image, assets: dict[str, Image.Image | str], asset_meta: dict[str, dict[str, str]]) -> str:
     room_preview = room.copy()
     room_preview.thumbnail((1100, 650), RESAMPLING.LANCZOS)
     room_data_url = image_to_data_url(room_preview)
 
     asset_urls: dict[str, str] = {}
     for name, image in assets.items():
-        asset = image.copy()
-        target_width = min(300, max(120, asset.width))
-        target_height = max(80, int(asset.height * (target_width / asset.width)))
-        asset = asset.resize((target_width, target_height), RESAMPLING.LANCZOS)
-        asset_urls[name] = image_to_data_url(asset)
+        if isinstance(image, Image.Image):
+            asset = image.copy()
+            target_width = min(300, max(120, asset.width))
+            target_height = max(80, int(asset.height * (target_width / asset.width)))
+            asset = asset.resize((target_width, target_height), RESAMPLING.LANCZOS)
+            asset_urls[name] = image_to_data_url(asset)
+        else:
+            asset_urls[name] = image
 
     payload = {
         "room": room_data_url,
         "assets": asset_urls,
+        "assetMeta": asset_meta,
         "width": room_preview.width,
         "height": room_preview.height,
     }
@@ -145,6 +246,12 @@ def build_html(payload_json: str) -> str:
   root.innerHTML = `
     <div class="drag-wrap">
       <div class="drag-toolbar">
+        <label>Source</label>
+        <select id="sourceSelect"></select>
+        <label>Category</label>
+        <select id="categorySelect"></select>
+        <label>Price</label>
+        <select id="priceSelect"></select>
         <label>Asset</label>
         <select id="assetSelect"></select>
         <button id="addBtn">Add</button>
@@ -166,6 +273,9 @@ def build_html(payload_json: str) -> str:
     </div>
   `;
 
+  const sourceSelect = root.querySelector('#sourceSelect');
+  const categorySelect = root.querySelector('#categorySelect');
+  const priceSelect = root.querySelector('#priceSelect');
   const assetSelect = root.querySelector('#assetSelect');
   const addBtn = root.querySelector('#addBtn');
   const delBtn = root.querySelector('#delBtn');
@@ -185,13 +295,62 @@ def build_html(payload_json: str) -> str:
   stage.style.height = `${DATA.height * scale}px`;
   stage.style.backgroundImage = `url('${DATA.room}')`;
 
-  const names = Object.keys(DATA.assets);
-  names.forEach((name) => {
+  const allNames = Object.keys(DATA.assets);
+  const assetMeta = DATA.assetMeta || {};
+
+  function addOption(select, value) {
     const option = document.createElement('option');
-    option.value = name;
-    option.textContent = name;
-    assetSelect.appendChild(option);
-  });
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  }
+
+  function populateFilterOptions() {
+    const sources = new Set(['All']);
+    const categories = new Set(['All']);
+    const prices = new Set(['All']);
+
+    allNames.forEach((name) => {
+      const meta = assetMeta[name] || {};
+      sources.add(meta.site || 'Unknown');
+      categories.add(meta.category || 'Unknown');
+      prices.add(meta.price_interval || 'Unknown');
+    });
+
+    Array.from(sources).sort().forEach((value) => addOption(sourceSelect, value));
+    Array.from(categories).sort().forEach((value) => addOption(categorySelect, value));
+    Array.from(prices).sort().forEach((value) => addOption(priceSelect, value));
+  }
+
+  function filterAssetOptions() {
+    const sourceValue = sourceSelect.value;
+    const categoryValue = categorySelect.value;
+    const priceValue = priceSelect.value;
+    assetSelect.innerHTML = '';
+
+    const filtered = allNames.filter((name) => {
+      const meta = assetMeta[name] || {};
+      const source = meta.site || 'Unknown';
+      const category = meta.category || 'Unknown';
+      const price = meta.price_interval || 'Unknown';
+      if (sourceValue !== 'All' && source !== sourceValue) return false;
+      if (categoryValue !== 'All' && category !== categoryValue) return false;
+      if (priceValue !== 'All' && price !== priceValue) return false;
+      return true;
+    });
+
+    filtered.forEach((name) => addOption(assetSelect, name));
+    if (filtered.length && !filtered.includes(assetSelect.value)) {
+      assetSelect.value = filtered[0];
+    }
+  }
+
+  populateFilterOptions();
+  filterAssetOptions();
+
+  sourceSelect.addEventListener('change', filterAssetOptions);
+  categorySelect.addEventListener('change', filterAssetOptions);
+  priceSelect.addEventListener('change', filterAssetOptions);
 
   let selected = null;
 
@@ -358,7 +517,7 @@ def build_html(payload_json: str) -> str:
 
   stage.addEventListener('click', () => setSelected(null));
 
-  if (names.length > 0) addItem(names[0]);
+  if (assetSelect.options.length > 0) addItem(assetSelect.options[0].value);
 })();
 </script>
 </body>
@@ -372,13 +531,26 @@ def main() -> None:
     st.title("Room Designer")
     st.caption("Same mouse-drag interface as the notebook app, embedded in Streamlit.")
 
+    if DATABASE_PATH.exists():
+        st.info(f"Using database: {DATABASE_PATH.name}")
+    else:
+        st.warning("Database not found; creating and populating it now.")
+
     try:
-        room, assets = load_assets()
+        refresh_catalog()
+    except Exception as exc:
+        st.error(f"Catalog refresh failed: {exc}")
+
+    try:
+        room, assets, asset_meta = load_assets()
     except FileNotFoundError as exc:
         st.error(str(exc))
         return
+    except Exception as exc:
+        st.error(f"Failed to load assets or access database: {exc}")
+        return
 
-    payload_json = build_payload(room, assets)
+    payload_json = build_payload(room, assets, asset_meta)
     html = build_html(payload_json)
     components.html(html, height=900, scrolling=True)
 
