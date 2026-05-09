@@ -13,6 +13,7 @@ from PIL import Image, ImageOps
 
 from database import (
     DATABASE_PATH,
+    delete_products_for_site,
     get_categories,
     get_products,
     get_sites,
@@ -20,7 +21,7 @@ from database import (
     initialize_database,
     upsert_products,
 )
-from scraper import fetch_ikea_products, fetch_meubella_products
+from scraper import fetch_furn_products, fetch_ikea_products, fetch_meubelo_products, fetch_meubels_com_products
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
@@ -123,7 +124,7 @@ def load_assets() -> tuple[Image.Image, dict[str, Image.Image | str], dict[str, 
             "price_interval": "Unknown",
         }
 
-    scraped_products = get_products(limit=20)
+    scraped_products = get_products()
     for product in scraped_products:
         cleaned_image_data_url = product.get("cleaned_image_data_url") or ""
         image_url = product.get("image_url") or ""
@@ -147,11 +148,12 @@ def load_assets() -> tuple[Image.Image, dict[str, Image.Image | str], dict[str, 
         price = product.get("price") or ""
         interval, _ = normalize_price(price)
         asset_meta[label] = {
-            "site": product.get("site", "Unknown"),
-            "category": product.get("category", "Unknown") or "Unknown",
-            "price": price,
-            "price_interval": interval,
-        }
+                "site": product.get("site", "Unknown"),
+                "category": product.get("category", "Unknown") or "Unknown",
+                "price": price,
+                "price_interval": interval,
+                "color": product.get("color") or "",
+            }
 
     return room, assets, asset_meta
 
@@ -164,15 +166,32 @@ def image_to_data_url(image: Image.Image) -> str:
 
 
 def refresh_catalog(force: bool = False) -> None:
-    initialize_database()
-    if force or not has_products():
-        ikea_products = fetch_ikea_products(10)
-        meubella_products = fetch_meubella_products(10)
+  initialize_database()
+  delete_products_for_site("Meubella NL")
+  expected_sites = {"IKEA NL", "Furn NL", "Meubels.com", "Meubelo NL"}
+  existing_sites = set(get_sites())
 
-        if ikea_products:
-            upsert_products("IKEA NL", ikea_products)
-        if meubella_products:
-            upsert_products("Meubella NL", meubella_products)
+  if force:
+    delete_products_for_site("IKEA NL")
+    delete_products_for_site("Furn NL")
+    delete_products_for_site("Meubels.com")
+    delete_products_for_site("Meubelo NL")
+    existing_sites = set()
+
+  if force or not has_products() or not expected_sites.issubset(existing_sites):
+    ikea_products = fetch_ikea_products(10)
+    furn_products = fetch_furn_products(50)
+    meubels_com_products = fetch_meubels_com_products(50)
+    meubelo_products = fetch_meubelo_products(50)
+
+    if ikea_products:
+      upsert_products("IKEA NL", ikea_products)
+    if furn_products:
+      upsert_products("Furn NL", furn_products)
+    if meubels_com_products:
+      upsert_products("Meubels.com", meubels_com_products)
+    if meubelo_products:
+      upsert_products("Meubelo NL", meubelo_products)
 
 
 @st.cache_data
@@ -210,8 +229,50 @@ def build_html(payload_json: str) -> str:
   <meta charset="utf-8" />
   <style>
     body { margin: 0; }
-    .drag-wrap { font-family: sans-serif; }
-    .drag-toolbar { display: flex; gap: 10px; align-items: center; margin: 0 0 10px 0; flex-wrap: wrap; }
+    .drag-wrap {
+      font-family: sans-serif;
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+    }
+    .drag-sidebar {
+      width: 260px;
+      min-width: 260px;
+      border: 1px solid #d7d7d7;
+      border-radius: 10px;
+      background: #fafafa;
+      padding: 12px;
+      box-sizing: border-box;
+    }
+    .drag-sidebar h4 {
+      margin: 0 0 10px 0;
+      font-size: 15px;
+    }
+    .drag-sidebar label {
+      display: block;
+      margin: 8px 0 4px;
+      font-size: 13px;
+      color: #333;
+    }
+    .drag-sidebar select,
+    .drag-sidebar button {
+      width: 100%;
+      box-sizing: border-box;
+      margin-bottom: 8px;
+      height: 34px;
+    }
+    .drag-main { flex: 1; min-width: 0; }
+    .drag-toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin: 0 0 10px 0;
+      flex-wrap: wrap;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: #fff;
+    }
     .drag-stage {
       position: relative;
       background-size: cover;
@@ -235,6 +296,10 @@ def build_html(payload_json: str) -> str:
     }
     .drag-item.selected { border-color: #0a84ff; }
     .drag-status { margin-top: 8px; color: #444; font-size: 13px; }
+    @media (max-width: 900px) {
+      .drag-wrap { flex-direction: column; }
+      .drag-sidebar { width: 100%; min-width: 0; }
+    }
   </style>
 </head>
 <body>
@@ -245,17 +310,27 @@ def build_html(payload_json: str) -> str:
   const DATA = __PAYLOAD_JSON__;
   root.innerHTML = `
     <div class="drag-wrap">
-      <div class="drag-toolbar">
+      <aside class="drag-sidebar">
+        <h4>Catalog Controls</h4>
         <label>Source</label>
         <select id="sourceSelect"></select>
         <label>Category</label>
         <select id="categorySelect"></select>
         <label>Price</label>
         <select id="priceSelect"></select>
+        <label>Color</label>
+        <select id="colorSelect"></select>
         <label>Asset</label>
         <select id="assetSelect"></select>
         <button id="addBtn">Add</button>
         <button id="delBtn">Delete Selected</button>
+        <button id="resetBtn">🔄 Reset Design</button>
+        <button id="rotLeftBtn">↺ Rotate -15°</button>
+        <button id="rotRightBtn">↻ Rotate +15°</button>
+        <button id="flipBtn">⇆ Flip</button>
+      </aside>
+      <div class="drag-main">
+        <div class="drag-toolbar">
         <label>Size</label>
         <input id="sizeRange" type="range" min="60" max="500" value="220" step="5" />
         <label>Rot X</label>
@@ -264,21 +339,21 @@ def build_html(payload_json: str) -> str:
         <input id="rotYRange" type="range" min="-180" max="180" value="0" step="1" style="width:120px" />
         <label>Rot Z</label>
         <input id="rotZRange" type="range" min="-180" max="180" value="0" step="1" style="width:120px" />
-        <button id="rotLeftBtn">&#8634; Z</button>
-        <button id="rotRightBtn">&#8635; Z</button>
-        <button id="flipBtn">&#8646; Flip</button>
+        </div>
+        <div id="stage" class="drag-stage"></div>
+        <div id="status" class="drag-status">Tip: Drag to move. Wheel = Z spin. Use Yaw (Y) slider for free vertical-axis rotation.</div>
       </div>
-      <div id="stage" class="drag-stage"></div>
-      <div id="status" class="drag-status">Tip: Drag to move. Wheel = Z spin. Use Yaw (Y) slider for free vertical-axis rotation.</div>
     </div>
   `;
 
   const sourceSelect = root.querySelector('#sourceSelect');
   const categorySelect = root.querySelector('#categorySelect');
   const priceSelect = root.querySelector('#priceSelect');
+  const colorSelect = root.querySelector('#colorSelect');
   const assetSelect = root.querySelector('#assetSelect');
   const addBtn = root.querySelector('#addBtn');
   const delBtn = root.querySelector('#delBtn');
+  const resetBtn = root.querySelector('#resetBtn');
   const sizeRange = root.querySelector('#sizeRange');
   const rotXRange = root.querySelector('#rotXRange');
   const rotYRange = root.querySelector('#rotYRange');
@@ -305,27 +380,49 @@ def build_html(payload_json: str) -> str:
     select.appendChild(option);
   }
 
+  function sortWithAllFirst(values) {
+    return values
+      .filter((value) => value !== 'All')
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }
+
   function populateFilterOptions() {
     const sources = new Set(['All']);
     const categories = new Set(['All']);
     const prices = new Set(['All']);
+    const colors = new Set(['All']);
 
     allNames.forEach((name) => {
       const meta = assetMeta[name] || {};
       sources.add(meta.site || 'Unknown');
       categories.add(meta.category || 'Unknown');
       prices.add(meta.price_interval || 'Unknown');
+      if (meta.color) colors.add(meta.color);
     });
 
-    Array.from(sources).sort().forEach((value) => addOption(sourceSelect, value));
-    Array.from(categories).sort().forEach((value) => addOption(categorySelect, value));
-    Array.from(prices).sort().forEach((value) => addOption(priceSelect, value));
+    addOption(sourceSelect, 'All');
+    sortWithAllFirst(Array.from(sources)).forEach((value) => addOption(sourceSelect, value));
+
+    addOption(categorySelect, 'All');
+    sortWithAllFirst(Array.from(categories)).forEach((value) => addOption(categorySelect, value));
+
+    addOption(priceSelect, 'All');
+    sortWithAllFirst(Array.from(prices)).forEach((value) => addOption(priceSelect, value));
+
+    addOption(colorSelect, 'All');
+    sortWithAllFirst(Array.from(colors)).forEach((value) => addOption(colorSelect, value));
+
+    sourceSelect.value = 'All';
+    categorySelect.value = 'All';
+    priceSelect.value = 'All';
+    colorSelect.value = 'All';
   }
 
   function filterAssetOptions() {
     const sourceValue = sourceSelect.value;
     const categoryValue = categorySelect.value;
     const priceValue = priceSelect.value;
+    const colorValue = colorSelect.value;
     assetSelect.innerHTML = '';
 
     const filtered = allNames.filter((name) => {
@@ -333,9 +430,11 @@ def build_html(payload_json: str) -> str:
       const source = meta.site || 'Unknown';
       const category = meta.category || 'Unknown';
       const price = meta.price_interval || 'Unknown';
+      const color = meta.color || '';
       if (sourceValue !== 'All' && source !== sourceValue) return false;
       if (categoryValue !== 'All' && category !== categoryValue) return false;
       if (priceValue !== 'All' && price !== priceValue) return false;
+      if (colorValue !== 'All' && color !== colorValue) return false;
       return true;
     });
 
@@ -351,6 +450,7 @@ def build_html(payload_json: str) -> str:
   sourceSelect.addEventListener('change', filterAssetOptions);
   categorySelect.addEventListener('change', filterAssetOptions);
   priceSelect.addEventListener('change', filterAssetOptions);
+  colorSelect.addEventListener('change', filterAssetOptions);
 
   let selected = null;
 
@@ -460,6 +560,12 @@ def build_html(payload_json: str) -> str:
   delBtn.addEventListener('click', () => {
     if (!selected) return;
     selected.remove();
+    setSelected(null);
+  });
+
+  resetBtn.addEventListener('click', () => {
+    // Remove all items from the stage
+    stage.querySelectorAll('.drag-item').forEach(item => item.remove());
     setSelected(null);
   });
 

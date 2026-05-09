@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS product (
     image_url TEXT,
     cleaned_image_data_url TEXT,
     price TEXT,
+    color TEXT,
+    rating TEXT,
     scraped_at TEXT DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(site_id, name),
     FOREIGN KEY(site_id) REFERENCES site(id) ON DELETE CASCADE,
@@ -45,6 +47,13 @@ def get_connection() -> sqlite3.Connection:
 def initialize_database() -> None:
     with get_connection() as conn:
         conn.executescript(CREATE_TABLES_SQL)
+        # Migrate: add color and rating columns if they don't exist yet
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(product)").fetchall()}
+        if "color" not in existing:
+            conn.execute("ALTER TABLE product ADD COLUMN color TEXT")
+        if "rating" not in existing:
+            conn.execute("ALTER TABLE product ADD COLUMN rating TEXT")
+        conn.commit()
 
 
 def _get_or_create_id(conn: sqlite3.Connection, table: str, name: str) -> int:
@@ -67,10 +76,10 @@ def upsert_products(site_name: str, products: Iterable[dict[str, str]]) -> None:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO product
-                (id, site_id, category_id, name, url, image_url, cleaned_image_data_url, price, scraped_at)
+                (id, site_id, category_id, name, url, image_url, cleaned_image_data_url, price, color, rating, scraped_at)
                 VALUES (
                     COALESCE((SELECT id FROM product WHERE site_id = ? AND name = ?), NULL),
-                    ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
                 )
                 """,
                 (
@@ -83,8 +92,21 @@ def upsert_products(site_name: str, products: Iterable[dict[str, str]]) -> None:
                     product.get("image_url", ""),
                     product.get("cleaned_image_data_url", ""),
                     product.get("price", ""),
+                    product.get("color", ""),
+                    product.get("rating", ""),
                 ),
             )
+        conn.commit()
+
+
+def delete_products_for_site(site_name: str) -> None:
+    initialize_database()
+    with get_connection() as conn:
+        conn.execute(
+            "DELETE FROM product WHERE site_id IN (SELECT id FROM site WHERE name = ?)",
+            (site_name,),
+        )
+        conn.execute("DELETE FROM site WHERE name = ?", (site_name,))
         conn.commit()
 
 
@@ -107,10 +129,31 @@ def get_categories() -> list[str]:
         return [row["name"] for row in conn.execute("SELECT name FROM category ORDER BY name").fetchall()]
 
 
+def get_colors() -> list[str]:
+    initialize_database()
+    with get_connection() as conn:
+        return [
+            row[0] for row in conn.execute(
+                "SELECT DISTINCT color FROM product WHERE color IS NOT NULL AND color != '' ORDER BY color"
+            ).fetchall()
+        ]
+
+
+def get_ratings() -> list[str]:
+    initialize_database()
+    with get_connection() as conn:
+        return [
+            row[0] for row in conn.execute(
+                "SELECT DISTINCT rating FROM product WHERE rating IS NOT NULL AND rating != '' ORDER BY rating"
+            ).fetchall()
+        ]
+
+
 def get_products(site: str | None = None, category: str | None = None, limit: int | None = None) -> list[dict[str, str]]:
     initialize_database()
     sql = """
-    SELECT p.name, p.url, p.image_url, p.cleaned_image_data_url, p.price, s.name AS site, c.name AS category
+    SELECT p.name, p.url, p.image_url, p.cleaned_image_data_url, p.price, p.color, p.rating,
+           s.name AS site, c.name AS category
     FROM product p
     JOIN site s ON p.site_id = s.id
     LEFT JOIN category c ON p.category_id = c.id
@@ -140,6 +183,8 @@ def get_products(site: str | None = None, category: str | None = None, limit: in
             "image_url": row["image_url"],
             "cleaned_image_data_url": row["cleaned_image_data_url"],
             "price": row["price"],
+            "color": row["color"] or "",
+            "rating": row["rating"] or "",
         }
         for row in rows
     ]
