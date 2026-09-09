@@ -44,6 +44,7 @@ docker_logs.txt
 # Testing files (or created during testing)
 *.batch
 *.db
+!/furniture.db
 .env.backup.*
 
 # Vendored / duplicate bundles, not part of this repo's source
