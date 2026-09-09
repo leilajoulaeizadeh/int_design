@@ -1,0 +1,11 @@
+# Optional dependencies for TripoSR reconstruction pipeline.
+# Install only when running triposr_cpu_pipeline.py.
+
+onnxruntime>=1.17,<2.0
+rembg>=2.0,<3.0
+transformers==4.35.0
+einops==0.7.0
+omegaconf==2.3.0
+trimesh==4.0.5
+xatlas==0.0.9
+moderngl==5.10.0

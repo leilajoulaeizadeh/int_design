@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "int_design"
+version = "0.1.0"
+description = "Room Designer Streamlit application using local assets."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Your Name" }]
+dependencies = [
+    "streamlit>=1.37,<2.0",
+    "pillow>=12.1,<13.0",
+    "numpy>=1.24,<3.0",
+    "plotly>=5.0,<7.0",
+    "requests>=2.31,<3.0",
+    "beautifulsoup4>=4.14",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+triposr = [
+    "onnxruntime>=1.17,<2.0",
+    "rembg>=2.0,<3.0",
+    "transformers==4.35.0",
+    "einops==0.7.0",
+    "omegaconf==2.3.0",
+    "trimesh==4.0.5",
+    "xatlas==0.0.9",
+    "moderngl==5.10.0",
+]
+experiments = ["boto3>=1.28,<2.0"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

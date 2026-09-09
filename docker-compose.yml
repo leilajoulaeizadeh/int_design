@@ -1,0 +1,15 @@
+services:
+  int_design_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: int_design_app
+    ports:
+      - "8501:8501"
+    environment:
+      STREAMLIT_SERVER_HEADLESS: "true"
+    volumes:
+      - ./data:/app/data
+      - ./notebooks:/app/notebooks
+      - ./furniture.db:/app/furniture.db
+    restart: unless-stopped

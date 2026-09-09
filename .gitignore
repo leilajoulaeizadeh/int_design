@@ -1,0 +1,52 @@
+# Generic ignore files for this repo
+/.venv/
+# Node deps for the lattice deck renderer: installed via `npm install`, never committed
+# (package.json + package-lock.json ARE committed; the install is reproduced from them).
+**/node_modules/
+**/*.code-workspace
+**/*.DS_Store
+**/*.pyc
+**/*.log
+**/*.sql
+**/*.sqlite3*
+**/*.xls*
+**/*.xml*
+!**/fixtures/*.xml
+**/*.csv*
+!**/fixtures/*.csv
+!**/lattice/datasets/*.csv
+**/*.parquet*
+
+# Negate the `static` folder. That way you can place files into this folder temporarily to download with VSCode.
+!static/**
+
+# No Notebooks! Use Jupytest and --sync the .ipynb with a .py:light representation of the notebook.
+**/*.ipynb
+
+# Static image files are also not required. Images here are used for the website and added via the ingestors.
+static/*
+
+# Various credentials
+.env
+
+# Testing/Coverage/Caching
+htmlcov
+.coverage*
+# Keep the coverage.py config tracked (only ignore the .coverage data files above).
+!.coveragerc
+*__pycache__*
+
+# Cached files
+.ruff_cache/**
+o365_token.txt
+docker_logs.txt
+
+# Testing files (or created during testing)
+*.batch
+*.db
+.env.backup.*
+
+# Vendored / duplicate bundles, not part of this repo's source
+/detectron-main/
+/deploy_bundle_streamlit/
+*.egg-info/

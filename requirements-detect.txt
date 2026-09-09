@@ -1,0 +1,15 @@
+# Optional dependencies for the "Multi-Object Detection" tab (object_detector.py,
+# multi_object_pipeline.py, local_hull_reconstruct.py). Install only when using
+# that tab. Reconstruction uses a free, CPU-only local visual-hull method
+# (no torch, no downloads) — only detection (YOLO/ultralytics) needs torch.
+#
+# CPU-only torch is pinned first so ultralytics doesn't pull in the default
+# CUDA build (unnecessary weight since there's no GPU here).
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+
+opencv-python-headless>=4.9,<5.0
+ultralytics>=8.3,<9.0
+scipy>=1.11,<2.0
+scikit-image>=0.22,<0.26
+trimesh>=4.0,<5.0
