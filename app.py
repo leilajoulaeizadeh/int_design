@@ -21,7 +21,6 @@ from database import (
   clear_catalog_data,
   get_products_with_3d_models,
     get_products,
-    has_products,
     initialize_database,
   upsert_product_3d_model,
     upsert_products,
@@ -4917,7 +4916,7 @@ def main() -> None:
     unsafe_allow_html=True,
   )
   st.markdown(
-    f"""
+    """
     <div class="hero-band">
       <div class="hero-grid">
         <div class="hero-mark">⌂</div>

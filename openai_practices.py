@@ -15,10 +15,6 @@ aws_access_key_id = os.getenv("aws_access_key_id")
 aws_secret_access_key = os.getenv("aws_secret_access_key")
 aws_session_token = os.getenv("aws_session_token")
 
-# # Get credentials from a session (useful for assumed roles)
-# session = boto3.Session(region_name=aws_region)
-# credentials = session.get_credentials().get_frozen_credentials()
-
 # Chained angle pipeline: each entry uses the previous result as reference.
 # The canonical front view (0°) is generated first from the original image,
 # then every subsequent angle is generated from the immediately preceding one.

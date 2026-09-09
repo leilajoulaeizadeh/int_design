@@ -4,7 +4,6 @@ import base64
 import json
 from io import BytesIO
 import re
-from typing import Iterable
 
 import requests
 from bs4 import BeautifulSoup

@@ -9,78 +9,102 @@ app_file: app.py
 pinned: false
 ---
 
-# Room Designer
+# int_design — Furniture Catalog & Room Designer
 
-This repository is ready to deploy to Hugging Face Spaces using Streamlit.
+A Streamlit app for browsing a scraped furniture catalog, reconstructing 3D
+models of individual products, detecting multiple objects in a scene photo,
+and placing furniture into a room for interactive room design.
 
-## What is included
+## Project layout
 
-- `app.py`: Streamlit app entry point.
-- `requirements.txt`: Python dependencies for Spaces.
-- `data/room.jpg`: Room background image.
-- `data/*.jpg`: Furniture assets.
+| Path | Purpose |
+| --- | --- |
+| `app.py` | Streamlit app: catalog browsing, 3D room designer, multi-object detection tab. |
+| `database.py` | SQLite schema and access layer for the scraped product catalog (`furniture.db`). |
+| `scraper.py` | Scrapes furniture listings (IKEA, Furn, Meubels.com) and normalizes product images. |
+| `seed_catalog.py` | CLI to populate/refresh the catalog database from the scrapers. |
+| `db_inspect.py` | CLI to inspect tables/rows in `furniture.db`. |
+| `triposr_cpu_pipeline.py` | Per-product 3D reconstruction via TripoSR (CPU-only). |
+| `local_hull_reconstruct.py` | Free, CPU-only 3D reconstruction via shape-from-silhouette (visual hull). |
+| `object_detector.py` | Multi-object detection (YOLO/ultralytics) for scraped scene/lifestyle photos. |
+| `multi_object_pipeline.py` | Scene → per-object 3D reconstruction pipeline, built on `object_detector.py`. |
+| `multi_object_store.py` | Storage for the multi-object detection feature (its own SQLite DB). |
+| `furniture_nvs_pipeline.py` | Novel-view synthesis pipeline (pose estimation + background removal) for a single product photo. |
+| `openai_practices.py` | Generates rotated catalog views of a product via Amazon Bedrock (Nova Canvas image variation). |
+| `process_batch.sh` | Batch-runs `triposr_cpu_pipeline.py` over cleaned catalog images. |
+| `src/int_design/` | Minimal installable package (`pip install -e .`) exposing project utilities. |
+| `static/three_test/` | Standalone Three.js viewer for testing a generated mesh outside the Streamlit app. |
 
-## Run locally
+## Setup
+
+### Local (virtualenv)
 
 1. Create and activate a virtual environment:
 
-	/usr/local/bin/python3 -m venv .venv
-	# macOS / Linux
-	source .venv/bin/activate
-	# Windows PowerShell
-	.\.venv\Scripts\Activate.ps1
+	python3 -m venv .venv
+	source .venv/bin/activate   # Windows: .\.venv\Scripts\Activate.ps1
 
-2. Install dependencies:
+2. Install the base app dependencies:
 
 	pip install -r requirements.txt
 
-3. Start the app:
+3. Optional extras, install only what you need:
+
+	pip install -r requirements-detect.txt    # Multi-object detection tab (YOLO)
+	pip install -r requirements-triposr.txt   # TripoSR 3D reconstruction
+
+4. Start the app:
 
 	streamlit run app.py
 
-4. Open the URL shown in your terminal.
+5. Open the URL shown in your terminal (defaults to http://localhost:8501).
 
-## Run with Docker
-
-Build and run using Docker Compose:
-
-1. Build the image:
+### Docker
 
 	docker compose build
-
-2. Start the app:
-
-	docker compose up -d
-
-3. Open the app:
-
-	http://localhost:8501
-
-4. Stop the app:
-
+	docker compose up -d      # app available at http://localhost:8501
 	docker compose down
 
-Notes:
+`data/`, `notebooks/`, and `furniture.db` are mounted into the container for
+persistence (see `docker-compose.yml`).
 
-- `data/`, `notebooks/`, and `furniture.db` are mounted into the container for persistence.
-- The Docker image includes system libraries required for image processing and TripoSR-related optional runtime dependencies.
+## Environment variables
 
-## Deploy to Hugging Face Spaces
+Copy `.env.example` to `.env` and fill in the values you need. Only required
+for the Bedrock novel-view generation (`openai_practices.py`); the rest of
+the app runs without any credentials.
 
-1. Create a new Space on Hugging Face.
-2. Choose `Streamlit` as SDK.
-3. Push this repository to the Space Git remote.
-4. Ensure your images are present in `data/`.
-5. Wait for the build to finish, then open your Space URL.
+	cp .env.example .env
 
-## Notes
+`.env` is git-ignored — never commit real credentials.
 
-- The app uses local files from `data/`; no upload step is required.
-- Export is available through the download button in the app UI.
+## Building the catalog
 
-## Standalone 3D Interaction Test UI
+	python seed_catalog.py --help
 
-This repository includes a separate Three.js viewer for testing interactive furniture placement and rotation without touching the Streamlit app.
+Populates `furniture.db` from the configured scrapers. Inspect the result with:
+
+	python db_inspect.py
+
+## 3D reconstruction
+
+Batch reconstruct cleaned catalog images with TripoSR:
+
+	./process_batch.sh --limit 10
+
+Or run a single-scene, multi-object reconstruction (detection + per-object
+mesh via visual hull) through `multi_object_pipeline.py`, used by the
+"Multi-Object Detection" tab in the app.
+
+## Tests
+
+	pip install -e ".[dev]"
+	pytest
+
+## Standalone 3D interaction test UI
+
+A separate Three.js viewer for testing interactive furniture placement and
+rotation without touching the Streamlit app.
 
 1. Ensure you already have a generated mesh, for example:
 
@@ -94,13 +118,14 @@ This repository includes a separate Three.js viewer for testing interactive furn
 
 	http://localhost:8080/static/three_test/
 
-4. In the viewer:
+4. In the viewer, keep the default path or provide another OBJ path, click
+   **Load Model**, then use **Move Mode** / **Rotate Mode** to manipulate it.
 
-	- Keep the default path `data/output/triposr_work/0/mesh.obj`, or provide another OBJ path.
-	- Click **Load Model**.
-	- Use **Move Mode** and **Rotate Mode** to manipulate the object.
+This viewer is intentionally isolated from the Streamlit UI.
 
-Notes:
+## Deploy to Hugging Face Spaces
 
-- This is intentionally isolated from the existing Streamlit UI.
-- The viewer is in `static/three_test/index.html`.
+1. Create a new Space on Hugging Face, choose `Streamlit` as the SDK.
+2. Push this repository to the Space's Git remote.
+3. Ensure your images are present in `data/`.
+4. Wait for the build to finish, then open your Space URL.
